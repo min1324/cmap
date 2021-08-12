@@ -33,6 +33,13 @@ type entry struct {
 	key, value interface{}
 }
 
+func New() *Map {
+	m := Map{}
+	n := m.getNode()
+	n.initBuckets()
+	return &m
+}
+
 // Load returns the value stored in the map for a key, or nil if no
 // value is present.
 // The ok result indicates whether value was found in the map.
