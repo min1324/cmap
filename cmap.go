@@ -23,14 +23,14 @@ type node struct {
 	buckets []bucket
 }
 
+type entry struct {
+	key, value interface{}
+}
+
 type bucket struct {
 	mu   sync.RWMutex
 	init int64
 	m    map[interface{}]interface{}
-}
-
-type entry struct {
-	key, value interface{}
 }
 
 func New() *Map {
@@ -53,8 +53,12 @@ func (m *Map) Load(key interface{}) (value interface{}, ok bool) {
 // Store sets the value for a key.
 func (m *Map) Store(key, value interface{}) {
 	hash := chash(key)
-	n, b := m.getNodeAndBucket(hash)
-	b.tryStore(m, n, key, value)
+	for {
+		n, b := m.getNodeAndBucket(hash)
+		if b.tryStore(m, n, key, value) {
+			return
+		}
+	}
 }
 
 // LoadOrStore returns the existing value for the key if present.
@@ -62,9 +66,11 @@ func (m *Map) Store(key, value interface{}) {
 // The loaded result is true if the value was loaded, false if stored.
 func (m *Map) LoadOrStore(key, value interface{}) (actual interface{}, loaded bool) {
 	hash := chash(key)
-	n, b := m.getNodeAndBucket(hash)
-	actual, loaded = b.tryLoadOrStore(m, n, key, value)
-	return
+	for {
+		n, b := m.getNodeAndBucket(hash)
+		actual, loaded = b.tryLoadOrStore(m, n, key, value)
+		return
+	}
 }
 
 // Delete deletes the value for a key.
@@ -75,9 +81,11 @@ func (m *Map) Delete(key interface{}) {
 // Delete deletes the value for a key.
 func (m *Map) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 	hash := chash(key)
-	n, b := m.getNodeAndBucket(hash)
-	value, loaded = b.tryDelete(m, n, key)
-	return
+	for {
+		n, b := m.getNodeAndBucket(hash)
+		value, loaded = b.tryDelete(m, n, key)
+		return
+	}
 }
 
 // Range calls f sequentially for each key and value present in the map.
@@ -110,16 +118,6 @@ func (m *Map) Len() int {
 	return int(atomic.LoadInt64(&m.count))
 }
 
-func (m *Map) getNodeAndBucket(hash uintptr) (n *node, b *bucket) {
-	n = m.getNode()
-	i := hash & n.mask
-	b = &(n.buckets[i])
-	if !b.inited() {
-		n.initBucket(i)
-	}
-	return n, b
-}
-
 func (m *Map) getNode() *node {
 	n := (*node)(atomic.LoadPointer(&m.node))
 	if n == nil {
@@ -135,6 +133,15 @@ func (m *Map) getNode() *node {
 		m.mu.Unlock()
 	}
 	return n
+}
+func (m *Map) getNodeAndBucket(hash uintptr) (n *node, b *bucket) {
+	n = m.getNode()
+	i := hash & n.mask
+	b = &(n.buckets[i])
+	if !b.inited() {
+		n.initBucket(i)
+	}
+	return n, b
 }
 
 func (n *node) initBuckets() {
@@ -194,11 +201,6 @@ func (b *bucket) tryStore(m *Map, n *node, key, value interface{}) bool {
 }
 
 func (b *bucket) tryLoadOrStore(m *Map, n *node, key, value interface{}) (actual interface{}, loaded bool) {
-	value, loaded = b.tryLoad(key)
-	if loaded {
-		return
-	}
-
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

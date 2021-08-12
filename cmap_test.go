@@ -106,8 +106,32 @@ func applyDeepCopyMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}
 	return applyCalls(new(DeepCopyMap), calls)
 }
 
+func TestMapLoad(t *testing.T) {
+	var m cmap.Map
+	for i := 0; i < 10; i++ {
+		m.Store(i, i)
+	}
+	for i := 0; i < 10; i++ {
+		v, ok := m.Load(i)
+		if !ok || v != i {
+			t.Error(v, i)
+		}
+	}
+}
+
+func TestMapDelete(t *testing.T) {
+	var m cmap.Map
+	for i := 0; i < 10; i++ {
+		m.Store(i, i)
+	}
+	v, ok := m.LoadAndDelete(5)
+	if !ok || v != 5 {
+		t.Error(v, 5)
+	}
+}
+
 func TestMapMatchesSync(t *testing.T) {
-	if err := quick.CheckEqual(applyMap, applyRWMutexMap, nil); err != nil {
+	if err := quick.CheckEqual(applyMap, applySyncMap, nil); err != nil {
 		t.Error(err)
 	}
 }
