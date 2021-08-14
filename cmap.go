@@ -20,29 +20,30 @@ type Map struct {
 }
 
 type node struct {
-	mask            uintptr
-	B               uint8 // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
-	pred            unsafe.Pointer
-	resizeInProgess int64 // 重新计算进程，0表示完成，1表示正在进行
-	buckets         []bucket
-}
-
-type entry struct {
-	key, value interface{}
+	B       uint8          // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
+	mask    uintptr        // 1<<B - 1
+	resize  uint32         // 重新计算进程，0表示完成，1表示正在进行
+	oldNode unsafe.Pointer // *node
+	buckets []bucket
 }
 
 type bucket struct {
 	mu     sync.RWMutex
-	init   int64 // 是否完成初始化
-	frozen bool  // true表示当前bucket已经冻结，进行resize
-	m      map[interface{}]interface{}
+	init   int64                       // 是否完成初始化
+	frozen bool                        // true表示当前bucket已经冻结，进行resize
+	m      map[interface{}]interface{} //
+}
+
+// use in range
+type entry struct {
+	key, value interface{}
 }
 
 func New() *Map {
-	m := Map{}
+	m := &Map{}
 	n := m.getNode()
 	n.initBuckets()
-	return &m
+	return m
 }
 
 // Load returns the value stored in the map for a key, or nil if no
@@ -145,7 +146,6 @@ func (m *Map) getNode() *node {
 			n = &node{
 				mask:    uintptr(mInitSize - 1),
 				B:       mInitBit,
-				pred:    nil,
 				buckets: make([]bucket, mInitSize),
 			}
 			atomic.StorePointer(&m.node, unsafe.Pointer(n))
@@ -164,23 +164,25 @@ func (n *node) initBuckets() {
 	for i := range n.buckets {
 		n.initBucket(uintptr(i))
 	}
-	atomic.StorePointer(&n.pred, nil)
+	atomic.StorePointer(&n.oldNode, nil)
+	atomic.StoreUint32(&n.resize, 0)
 }
 
 func (n *node) initBucket(i uintptr) *bucket {
-	nb := &(n.buckets[i&n.mask])
+	i = i & n.mask
+	nb := &(n.buckets[i])
 	if nb.inited() {
 		return nb
 	}
 	nb.mu.Lock()
 	defer nb.mu.Unlock()
-	nb = &(n.buckets[i&n.mask])
+	nb = &(n.buckets[i])
 	if nb.inited() {
 		return nb
 	}
 	nb.m = make(map[interface{}]interface{})
 
-	p := (*node)(atomic.LoadPointer(&n.pred))
+	p := (*node)(atomic.LoadPointer(&n.oldNode))
 	if p != nil {
 		if n.mask > p.mask {
 			// grow
@@ -204,6 +206,7 @@ func (n *node) initBucket(i uintptr) *bucket {
 		}
 	}
 
+	// finish initialize
 	atomic.StoreInt64(&nb.init, 1)
 	return nb
 }
@@ -240,13 +243,13 @@ func (b *bucket) tryLoad(key interface{}) (value interface{}, ok bool) {
 func (b *bucket) tryStore(m *Map, n *node, check bool, key, value interface{}) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if check {
-		if _, ok := b.m[key]; ok {
-			return true
-		}
-	}
 	if b.frozen {
 		return false
+	}
+	if check {
+		if _, ok := b.m[key]; ok {
+			return false
+		}
 	}
 
 	l0 := len(b.m) // Using length check existence is faster than accessing.
@@ -267,11 +270,12 @@ func (b *bucket) tryStore(m *Map, n *node, check bool, key, value interface{}) b
 func (b *bucket) tryDelete(m *Map, n *node, key interface{}) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if _, ok := b.m[key]; !ok {
-		return true
-	}
 	if b.frozen {
 		return false
+	}
+
+	if _, ok := b.m[key]; !ok {
+		return true
 	}
 
 	delete(b.m, key)
@@ -285,11 +289,12 @@ func (b *bucket) tryDelete(m *Map, n *node, key interface{}) bool {
 }
 
 func growWork(m *Map, n *node, B uint8) {
-	if !n.growing() && atomic.CompareAndSwapInt64(&n.resizeInProgess, 0, 1) {
+	if !n.growing() && atomic.CompareAndSwapUint32(&n.resize, 0, 1) {
 		nn := &node{
 			mask:    bucketMask(B),
 			B:       B,
-			pred:    unsafe.Pointer(n),
+			resize:  1,
+			oldNode: unsafe.Pointer(n),
 			buckets: make([]bucket, bucketShift(B)),
 		}
 		ok := atomic.CompareAndSwapPointer(&m.node, unsafe.Pointer(n), unsafe.Pointer(nn))
@@ -301,7 +306,7 @@ func growWork(m *Map, n *node, B uint8) {
 }
 
 func (n *node) growing() bool {
-	return atomic.LoadPointer(&n.pred) != nil
+	return atomic.LoadPointer(&n.oldNode) != nil
 }
 
 func overLoadFactor(count int64, B uint8) bool {
