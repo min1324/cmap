@@ -106,22 +106,30 @@ func applyDeepCopyMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}
 	return applyCalls(new(DeepCopyMap), calls)
 }
 
+func TestMapInit(t *testing.T) {
+	var m cmap.Map
+	m.Load(1)
+
+	m.Store(1, 1)
+	t.Error(m.Load(1))
+}
+
 func TestMapLoad(t *testing.T) {
 	var m cmap.Map
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 1000; i++ {
 		m.Store(i, i)
 	}
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 1000; i++ {
 		v, ok := m.Load(i)
 		if !ok || v != i {
-			t.Error(v, i)
+			t.Error(v, ok, i)
 		}
 	}
 }
 
 func TestMapDelete(t *testing.T) {
 	var m cmap.Map
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 100; i++ {
 		m.Store(i, i)
 	}
 	v, ok := m.LoadAndDelete(5)
