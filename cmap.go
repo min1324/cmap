@@ -20,18 +20,18 @@ type Map struct {
 }
 
 type node struct {
-	B       uint8          // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
 	mask    uintptr        // 1<<B - 1
+	B       uint8          // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
 	resize  uint32         // 重新计算进程，0表示完成，1表示正在进行
 	oldNode unsafe.Pointer // *node
 	buckets []bucket
 }
 
 type bucket struct {
-	mu     sync.RWMutex
-	init   int64                       // 是否完成初始化
-	frozen bool                        // true表示当前bucket已经冻结，进行resize
-	m      map[interface{}]interface{} //
+	mu    sync.RWMutex
+	init  int32                       // 是否完成初始化
+	froze int32                       // true表示当前bucket已经冻结，进行resize
+	m     map[interface{}]interface{} //
 }
 
 // use in range
@@ -61,7 +61,7 @@ func (m *Map) Store(key, value interface{}) {
 	hash := chash(key)
 	for {
 		n, b := m.getNodeAndBucket(hash)
-		if b.tryStore(m, n, false, key, value) {
+		if b.tryStore(m, n, key, value) {
 			return
 		}
 	}
@@ -72,14 +72,12 @@ func (m *Map) Store(key, value interface{}) {
 // The loaded result is true if the value was loaded, false if stored.
 func (m *Map) LoadOrStore(key, value interface{}) (actual interface{}, loaded bool) {
 	hash := chash(key)
+	var ok bool
 	for {
 		n, b := m.getNodeAndBucket(hash)
-		actual, loaded = b.tryLoad(key)
-		if loaded {
+		actual, loaded, ok = b.tryLoadOrStore(m, n, key, value)
+		if ok {
 			return
-		}
-		if b.tryStore(m, n, true, key, value) {
-			return value, false
 		}
 	}
 }
@@ -164,7 +162,9 @@ func (n *node) initBuckets() {
 	for i := range n.buckets {
 		n.initBucket(uintptr(i))
 	}
+	// empty oldNode
 	atomic.StorePointer(&n.oldNode, nil)
+	// finish all evacute
 	atomic.StoreUint32(&n.resize, 0)
 }
 
@@ -182,6 +182,7 @@ func (n *node) initBucket(i uintptr) *bucket {
 	}
 	nb.m = make(map[interface{}]interface{})
 
+	// evacute oldNode to node
 	p := (*node)(atomic.LoadPointer(&n.oldNode))
 	if p != nil {
 		if n.mask > p.mask {
@@ -207,17 +208,21 @@ func (n *node) initBucket(i uintptr) *bucket {
 	}
 
 	// finish initialize
-	atomic.StoreInt64(&nb.init, 1)
+	atomic.StoreInt32(&nb.init, 1)
 	return nb
 }
 
 func (b *bucket) inited() bool {
-	return atomic.LoadInt64(&b.init) == 1
+	return atomic.LoadInt32(&b.init) == 1
+}
+
+func (b *bucket) frozen() bool {
+	return atomic.LoadInt32(&b.froze) == 1
 }
 
 func (b *bucket) freeze() map[interface{}]interface{} {
 	b.mu.Lock()
-	b.frozen = true
+	atomic.StoreInt32(&b.froze, 1)
 	m := b.m
 	b.mu.Unlock()
 	return m
@@ -240,16 +245,11 @@ func (b *bucket) tryLoad(key interface{}) (value interface{}, ok bool) {
 	return
 }
 
-func (b *bucket) tryStore(m *Map, n *node, check bool, key, value interface{}) bool {
+func (b *bucket) tryStore(m *Map, n *node, key, value interface{}) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.frozen {
+	if b.frozen() {
 		return false
-	}
-	if check {
-		if _, ok := b.m[key]; ok {
-			return false
-		}
 	}
 
 	l0 := len(b.m) // Using length check existence is faster than accessing.
@@ -258,19 +258,43 @@ func (b *bucket) tryStore(m *Map, n *node, check bool, key, value interface{}) b
 	if l0 == l1 {
 		return true
 	}
-	// atomic.AddInt64(&m.count, 1)
 	count := atomic.AddInt64(&m.count, 1)
-	// TODO grow
+	// grow
 	if overLoadFactor(count, n.B) || overflowGrow(int64(l1), n.B) {
 		growWork(m, n, n.B+1)
 	}
 	return true
 }
 
+func (b *bucket) tryLoadOrStore(m *Map, n *node, key, value interface{}) (actual interface{}, loaded, ok bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.frozen() {
+		return nil, false, false
+	}
+	actual, loaded = b.m[key]
+	if loaded {
+		return actual, loaded, true
+	}
+
+	l0 := len(b.m) // Using length check existence is faster than accessing.
+	b.m[key] = value
+	l1 := len(b.m)
+	if l0 == l1 {
+		return value, false, true
+	}
+	count := atomic.AddInt64(&m.count, 1)
+	// grow
+	if overLoadFactor(count, n.B) || overflowGrow(int64(l1), n.B) {
+		growWork(m, n, n.B+1)
+	}
+	return value, false, true
+}
+
 func (b *bucket) tryDelete(m *Map, n *node, key interface{}) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.frozen {
+	if b.frozen() {
 		return false
 	}
 
@@ -281,7 +305,7 @@ func (b *bucket) tryDelete(m *Map, n *node, key interface{}) bool {
 	delete(b.m, key)
 	count := atomic.AddInt64(&m.count, -1)
 
-	// TODO shrink
+	// shrink
 	if belowShrink(count, n.B) {
 		growWork(m, n, n.B-1)
 	}
