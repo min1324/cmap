@@ -1,6 +1,7 @@
 package cmap
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -28,15 +29,10 @@ type node struct {
 }
 
 type bucket struct {
-	mu    sync.RWMutex
-	init  int32                       // 是否完成初始化
-	froze int32                       // true表示当前bucket已经冻结，进行resize
-	m     map[interface{}]interface{} //
-}
-
-// use in range
-type entry struct {
-	key, value interface{}
+	mu       sync.RWMutex
+	evacuted int32                       // 1 表示oldNode对应buckut已经迁移到新buckut
+	frozen   int32                       // true表示当前bucket已经冻结，进行resize
+	m        map[interface{}]interface{} //
 }
 
 func New() *Map {
@@ -64,6 +60,7 @@ func (m *Map) Store(key, value interface{}) {
 		if b.tryStore(m, n, key, value) {
 			return
 		}
+		runtime.Gosched()
 	}
 }
 
@@ -79,6 +76,7 @@ func (m *Map) LoadOrStore(key, value interface{}) (actual interface{}, loaded bo
 		if ok {
 			return
 		}
+		runtime.Gosched()
 	}
 }
 
@@ -90,15 +88,14 @@ func (m *Map) Delete(key interface{}) {
 // Delete deletes the value for a key.
 func (m *Map) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 	hash := chash(key)
+	var ok bool
 	for {
 		n, b := m.getNodeAndBucket(hash)
-		value, loaded = b.tryLoad(key)
-		if !loaded {
+		value, loaded, ok = b.tryLoadAndDelete(m, n, key)
+		if ok {
 			return
 		}
-		if b.tryDelete(m, n, key) {
-			return
-		}
+		runtime.Gosched()
 	}
 }
 
@@ -116,10 +113,8 @@ func (m *Map) Range(f func(key, value interface{}) bool) {
 	n := m.getNode()
 	for i := range n.buckets {
 		b := n.getBucket(uintptr(i))
-		for _, e := range b.clone() {
-			if !f(e.key, e.value) {
-				return
-			}
+		if !b.walk(f) {
+			return
 		}
 	}
 }
@@ -170,72 +165,96 @@ func (n *node) initBuckets() {
 
 func (n *node) initBucket(i uintptr) *bucket {
 	i = i & n.mask
-	nb := &(n.buckets[i])
-	if nb.inited() {
-		return nb
-	}
-	nb.mu.Lock()
-	defer nb.mu.Unlock()
-	nb = &(n.buckets[i])
-	if nb.inited() {
-		return nb
-	}
-	nb.m = make(map[interface{}]interface{})
-
-	// evacute oldNode to node
+	b := &(n.buckets[i])
+	b.lazyinit()
 	p := (*node)(atomic.LoadPointer(&n.oldNode))
-	if p != nil {
-		if n.mask > p.mask {
-			// grow
-			pb := p.getBucket(i)
-			for k, v := range pb.freeze() {
-				h := chash(k)
-				if h&n.mask == i {
-					nb.m[k] = v
-				}
-			}
-		} else {
-			// shrink
-			pb0 := p.getBucket(i)
-			for k, v := range pb0.freeze() {
-				nb.m[k] = v
-			}
-			pb1 := *p.getBucket(i + bucketShift(n.B))
-			for k, v := range pb1.freeze() {
-				nb.m[k] = v
+	if p != nil && !b.hadEvacuted() {
+		evacute(n, p, b, i)
+	}
+	return b
+}
+
+// evacute node.oldNode -> node
+// i must be b==n.buckuts[i&n.mask]
+func evacute(n, p *node, b *bucket, i uintptr) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.hadEvacuted() {
+		return
+	}
+
+	if n.mask > p.mask {
+		// grow
+		pb := p.getBucket(i)
+		for k, v := range pb.freeze() {
+			h := chash(k)
+			if h&n.mask == i {
+				b.m[k] = v
 			}
 		}
+	} else {
+		// shrink
+		pb0 := p.getBucket(i)
+		for k, v := range pb0.freeze() {
+			b.m[k] = v
+		}
+		pb1 := *p.getBucket(i + bucketShift(n.B))
+		for k, v := range pb1.freeze() {
+			b.m[k] = v
+		}
 	}
-
-	// finish initialize
-	atomic.StoreInt32(&nb.init, 1)
-	return nb
+	atomic.StoreInt32(&b.evacuted, 1)
 }
 
-func (b *bucket) inited() bool {
-	return atomic.LoadInt32(&b.init) == 1
+func (b *bucket) lazyinit() {
+	if b.hadInited() {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.hadInited() {
+		return
+	}
+	b.m = make(map[interface{}]interface{})
 }
 
-func (b *bucket) frozen() bool {
-	return atomic.LoadInt32(&b.froze) == 1
+func (b *bucket) hadInited() bool {
+	return b.m != nil
+}
+
+func (b *bucket) hadEvacuted() bool {
+	return atomic.LoadInt32(&b.evacuted) == 1
+}
+
+func (b *bucket) hadFrozen() bool {
+	return atomic.LoadInt32(&b.frozen) == 1
 }
 
 func (b *bucket) freeze() map[interface{}]interface{} {
 	b.mu.Lock()
-	atomic.StoreInt32(&b.froze, 1)
+	atomic.StoreInt32(&b.frozen, 1)
 	m := b.m
 	b.mu.Unlock()
 	return m
 }
 
-func (b *bucket) clone() []entry {
+func (b *bucket) walk(f func(k, v interface{}) bool) (done bool) {
+	// use in range
+	type entry struct {
+		key, value interface{}
+	}
 	b.mu.RLock()
 	entries := make([]entry, 0, len(b.m))
 	for k, v := range b.m {
 		entries = append(entries, entry{key: k, value: v})
 	}
 	b.mu.RUnlock()
-	return entries
+	for _, e := range entries {
+		if !f(e.key, e.value) {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *bucket) tryLoad(key interface{}) (value interface{}, ok bool) {
@@ -248,7 +267,7 @@ func (b *bucket) tryLoad(key interface{}) (value interface{}, ok bool) {
 func (b *bucket) tryStore(m *Map, n *node, key, value interface{}) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.frozen() {
+	if b.hadFrozen() {
 		return false
 	}
 
@@ -269,39 +288,33 @@ func (b *bucket) tryStore(m *Map, n *node, key, value interface{}) bool {
 func (b *bucket) tryLoadOrStore(m *Map, n *node, key, value interface{}) (actual interface{}, loaded, ok bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.frozen() {
+	if b.hadFrozen() {
 		return nil, false, false
 	}
 	actual, loaded = b.m[key]
 	if loaded {
 		return actual, loaded, true
 	}
-
-	l0 := len(b.m) // Using length check existence is faster than accessing.
 	b.m[key] = value
-	l1 := len(b.m)
-	if l0 == l1 {
-		return value, false, true
-	}
 	count := atomic.AddInt64(&m.count, 1)
+
 	// grow
-	if overLoadFactor(count, n.B) || overflowGrow(int64(l1), n.B) {
+	if overLoadFactor(count, n.B) || overflowGrow(int64(len(b.m)), n.B) {
 		growWork(m, n, n.B+1)
 	}
 	return value, false, true
 }
 
-func (b *bucket) tryDelete(m *Map, n *node, key interface{}) bool {
+func (b *bucket) tryLoadAndDelete(m *Map, n *node, key interface{}) (actual interface{}, loaded, ok bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.frozen() {
-		return false
+	if b.hadFrozen() {
+		return nil, false, false
 	}
-
-	if _, ok := b.m[key]; !ok {
-		return true
+	actual, loaded = b.m[key]
+	if !loaded {
+		return nil, false, true
 	}
-
 	delete(b.m, key)
 	count := atomic.AddInt64(&m.count, -1)
 
@@ -309,7 +322,7 @@ func (b *bucket) tryDelete(m *Map, n *node, key interface{}) bool {
 	if belowShrink(count, n.B) {
 		growWork(m, n, n.B-1)
 	}
-	return true
+	return actual, loaded, true
 }
 
 func growWork(m *Map, n *node, B uint8) {
@@ -334,15 +347,15 @@ func (n *node) growing() bool {
 }
 
 func overLoadFactor(count int64, B uint8) bool {
-	if B > 15 {
-		return false
+	if B > 31 {
+		B = 31
 	}
 	return count >= int64(1<<(2*B))
 }
 
 func overflowGrow(count int64, B uint8) bool {
 	if B > 15 {
-		return false
+		B = 15
 	}
 	return count > int64(1<<(B+1))
 }

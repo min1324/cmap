@@ -6,6 +6,8 @@ func chash(i interface{}) uintptr {
 	return nilinterhash(noescape(unsafe.Pointer(&i)), 0xdeadbeef)
 }
 
+// in runtime/alg.go
+//
 //go:linkname nilinterhash runtime.nilinterhash
 func nilinterhash(p unsafe.Pointer, h uintptr) uintptr
 
