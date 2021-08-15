@@ -188,22 +188,25 @@ func evacute(n, p *node, b *bucket, i uintptr) {
 	if n.mask > p.mask {
 		// grow
 		pb := p.getBucket(i)
-		for k, v := range pb.freeze() {
+		pb.freezeWalk(func(k, v interface{}) bool {
 			h := chash(k)
 			if h&n.mask == i {
 				b.m[k] = v
 			}
-		}
+			return true
+		})
 	} else {
 		// shrink
 		pb0 := p.getBucket(i)
-		for k, v := range pb0.freeze() {
+		pb0.freezeWalk(func(k, v interface{}) bool {
 			b.m[k] = v
-		}
+			return true
+		})
 		pb1 := *p.getBucket(i + bucketShift(n.B))
-		for k, v := range pb1.freeze() {
+		pb1.freezeWalk(func(k, v interface{}) bool {
 			b.m[k] = v
-		}
+			return true
+		})
 	}
 	atomic.StoreInt32(&b.evacuted, 1)
 }
@@ -233,12 +236,15 @@ func (b *bucket) hadFrozen() bool {
 	return atomic.LoadInt32(&b.frozen) == 1
 }
 
-func (b *bucket) freeze() map[interface{}]interface{} {
+func (b *bucket) freezeWalk(f func(k, v interface{}) bool) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	atomic.StoreInt32(&b.frozen, 1)
-	m := b.m
-	b.mu.Unlock()
-	return m
+	for k, v := range b.m {
+		if !f(k, v) {
+			return
+		}
+	}
 }
 
 func (b *bucket) walk(f func(k, v interface{}) bool) (done bool) {
