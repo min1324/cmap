@@ -106,17 +106,6 @@ func applyDeepCopyMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}
 	return applyCalls(new(DeepCopyMap), calls)
 }
 
-func TestMapEvacute(t *testing.T) {
-	var m cmap.Map
-	for i := 0; i < 1<<20; i++ {
-		m.Store(i, i)
-	}
-	v, ok := m.Load(1 << 15)
-	if !ok || v != 1<<15 {
-		t.Errorf("i!=15")
-	}
-}
-
 func TestMapMatchesSync(t *testing.T) {
 	if err := quick.CheckEqual(applyMap, applySyncMap, nil); err != nil {
 		t.Error(err)
