@@ -1,5 +1,5 @@
 # cmap 
-[![Build Status](https://travis-ci.com/min1324/cmap.svg?branch=main)](https://travis-ci.com/min1324/cmap) [![codecov](https://codecov.io/gh/min1324/cmap/branch/main/graph/badge.svg)](https://codecov.io/gh/min1324/cmap)[![GoDoc](https://godoc.org/github.com/min1324/cmap?status.png)](https://godoc.org/github.com/min1324/cmap)[![Go Report Card](https://goreportcard.com/badge/github.com/min1324/cmap)](https://goreportcard.com/report/github.com/min1324/cmap)
+[![Build Status](https://travis-ci.com/min1324/cmap.svg?branch=main)](https://travis-ci.com/min1324/cmap) [![codecov](https://codecov.io/gh/min1324/cmap/branch/main/graph/badge.svg)](https://codecov.io/gh/min1324/cmap) [![GoDoc](https://godoc.org/github.com/min1324/cmap?status.png)](https://godoc.org/github.com/min1324/cmap) [![Go Report Card](https://goreportcard.com/badge/github.com/min1324/cmap)](https://goreportcard.com/report/github.com/min1324/cmap)
 
 ConcurrentMap (cmap) 是 **go** 分片加锁 map 的一种。它在通过减小锁的粒度和持有的时间来提高并发性。
 
