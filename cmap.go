@@ -35,6 +35,7 @@ type bucket struct {
 	m        map[interface{}]interface{} //
 }
 
+// New return an initialize cmap
 func New() *Map {
 	m := &Map{}
 	n := m.getNode()
@@ -85,7 +86,8 @@ func (m *Map) Delete(key interface{}) {
 	m.LoadAndDelete(key)
 }
 
-// Delete deletes the value for a key.
+// LoadAndDelete deletes the value for a key, returning the previous value if any.
+// The loaded result reports whether the key was present.
 func (m *Map) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 	hash := chash(key)
 	var ok bool
