@@ -179,10 +179,9 @@ func (n *node) initBucket(i uintptr) *bucket {
 func evacute(n, p *node, b *bucket, i uintptr) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.hadEvacuted() {
+	if b.hadEvacuted() || p == nil {
 		return
 	}
-
 	if n.mask > p.mask {
 		// grow
 		pb := p.getBucket(i)
@@ -279,7 +278,7 @@ func (b *bucket) tryStore(m *Map, n *node, key, value interface{}) bool {
 	}
 	count := atomic.AddInt64(&m.count, 1)
 	// grow
-	if overLoadFactor(count, n.B) || overflowGrow(int64(l1), n.B) {
+	if overLoadFactor(int64(l1), n.B) || overflowGrow(count, n.B) {
 		growWork(m, n, n.B+1)
 	}
 	return true
@@ -299,7 +298,7 @@ func (b *bucket) tryLoadOrStore(m *Map, n *node, key, value interface{}) (actual
 	count := atomic.AddInt64(&m.count, 1)
 
 	// grow
-	if overLoadFactor(count, n.B) || overflowGrow(int64(len(b.m)), n.B) {
+	if overLoadFactor(int64(len(b.m)), n.B) || overflowGrow(count, n.B) {
 		growWork(m, n, n.B+1)
 	}
 	return value, false, true
@@ -346,20 +345,23 @@ func (n *node) growing() bool {
 	return atomic.LoadPointer(&n.oldNode) != nil
 }
 
-func overLoadFactor(count int64, B uint8) bool {
+// buckut len over loadfactor
+func overLoadFactor(blen int64, B uint8) bool {
+	if B > 15 {
+		B = 15
+	}
+	return blen > int64(1<<(B+1)) && B < 31
+}
+
+// count overflow grow threshold
+func overflowGrow(count int64, B uint8) bool {
 	if B > 31 {
-		B = 31
+		return false
 	}
 	return count >= int64(1<<(2*B))
 }
 
-func overflowGrow(count int64, B uint8) bool {
-	if B > 15 {
-		B = 15
-	}
-	return count > int64(1<<(B+1))
-}
-
+// count below shrink threshold
 func belowShrink(count int64, B uint8) bool {
 	if B-1 <= mInitBit {
 		return false
