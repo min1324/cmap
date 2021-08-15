@@ -106,6 +106,17 @@ func applyDeepCopyMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}
 	return applyCalls(new(DeepCopyMap), calls)
 }
 
+func TestMapEvacute(t *testing.T) {
+	var m cmap.Map
+	for i := 0; i < 1<<20; i++ {
+		m.Store(i, i)
+	}
+	v, ok := m.Load(1 << 15)
+	if !ok || v != 1<<15 {
+		t.Errorf("i!=15")
+	}
+}
+
 func TestMapMatchesSync(t *testing.T) {
 	if err := quick.CheckEqual(applyMap, applySyncMap, nil); err != nil {
 		t.Error(err)
@@ -205,5 +216,86 @@ func TestIssue40999(t *testing.T) {
 		m.Store(p, struct{}{})
 		m.Delete(p)
 		runtime.GC()
+	}
+}
+
+func TestMapCreation(t *testing.T) {
+	m := cmap.New()
+
+	if m.Len() != 0 {
+		t.Error("new map should be empty.")
+	}
+}
+
+func TestStoreOperationDuplicatedKey(t *testing.T) {
+	m := cmap.Map{}
+	m.Store(t, "")
+	m.Store(t, "")
+	if v := m.Len(); v != 1 {
+		t.Errorf("map Count() should be %d, got %d", 1, v)
+	}
+	m.LoadOrStore("m", "")
+	if v := m.Len(); v != 2 {
+		t.Errorf("map Count() should be %d, got %d", 2, v)
+	}
+	m.Delete(t)
+	if v := m.Len(); v != 1 {
+		t.Errorf("map Count() should be %d, got %d", 1, v)
+	}
+	m.Delete(t)
+	if v := m.Len(); v != 1 {
+		t.Errorf("map Count() should be %d, got %d", 1, v)
+	}
+}
+
+func TestMapStoreAndLoad(t *testing.T) {
+	const mapSize = 1 << 14
+
+	var (
+		m    cmap.Map
+		wg   sync.WaitGroup
+		seen = make(map[int64]bool, mapSize)
+	)
+
+	for n := int64(1); n <= mapSize; n++ {
+		nn := n
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.Store(nn, nn)
+		}()
+	}
+
+	wg.Wait()
+
+	m.Range(func(ki, vi interface{}) bool {
+		k, v := ki.(int64), vi.(int64)
+		if v%k != 0 {
+			t.Fatalf("while Storing multiples of %v, Range saw value %v", k, v)
+		}
+		if seen[k] {
+			t.Fatalf("Range visited key %v twice", k)
+		}
+		seen[k] = true
+		return true
+	})
+
+	if len(seen) != mapSize {
+		t.Fatalf("Range visited %v elements of %v-element Map", len(seen), mapSize)
+	}
+
+	for n := int64(1); n <= mapSize; n++ {
+		nn := n
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.Delete(nn)
+		}()
+	}
+
+	wg.Wait()
+
+	if m.Len() != 0 {
+		t.Fatalf("Map should be empty, remained %v", m.Len())
 	}
 }
