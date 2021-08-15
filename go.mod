@@ -1,3 +1,3 @@
 module github.com/min1324/cmap
 
-go 1.13
+go 1.15
