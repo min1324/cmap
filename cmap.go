@@ -30,6 +30,7 @@ type node struct {
 
 type bucket struct {
 	mu       sync.RWMutex
+	init     int32
 	evacuted int32                       // 1 表示oldNode对应buckut已经迁移到新buckut
 	frozen   int32                       // true表示当前bucket已经冻结，进行resize
 	m        map[interface{}]interface{} //
@@ -217,10 +218,11 @@ func (b *bucket) lazyinit() {
 		return
 	}
 	b.m = make(map[interface{}]interface{})
+	atomic.StoreInt32(&b.init, 1)
 }
 
 func (b *bucket) hadInited() bool {
-	return b.m != nil
+	return atomic.LoadInt32(&b.init) == 1
 }
 
 func (b *bucket) hadEvacuted() bool {
