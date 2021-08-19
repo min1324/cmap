@@ -188,31 +188,22 @@ func evacute(n, p *node, b *bucket, i uintptr) {
 	if n.mask > p.mask {
 		// grow
 		pb := p.getBucket(i)
-		pb.freeze()
-		pb.walk(func(k, v interface{}) bool {
+		pb.freezeInLock(func(k, v interface{}) bool {
 			h := chash(k)
 			if h&n.mask == i {
 				b.m[k] = v
 			}
 			return true
 		})
-		// for k, v := range pb.freeze() {
-		// 	h := chash(k)
-		// 	if h&n.mask == i {
-		// 		b.m[k] = v
-		// 	}
-		// }
 	} else {
 		// shrink
 		pb0 := p.getBucket(i)
-		pb1 := *p.getBucket(i + bucketShift(n.B))
-		pb0.freeze()
-		pb0.walk(func(k, v interface{}) bool {
+		pb1 := p.getBucket(i + bucketShift(n.B))
+		pb0.freezeInLock(func(k, v interface{}) bool {
 			b.m[k] = v
 			return true
 		})
-		pb1.freeze()
-		pb1.walk(func(k, v interface{}) bool {
+		pb1.freezeInLock(func(k, v interface{}) bool {
 			b.m[k] = v
 			return true
 		})
@@ -245,12 +236,18 @@ func (b *bucket) hadFrozen() bool {
 	return atomic.LoadInt32(&b.frozen) == 1
 }
 
-func (b *bucket) freeze() map[interface{}]interface{} {
+func (b *bucket) freezeInLock(f func(k, v interface{}) bool) (done bool) {
 	b.mu.Lock()
 	atomic.StoreInt32(&b.frozen, 1)
-	m := b.m
+
+	// BUG issue001 b.m race with delete(b.m,key)
+	for k, v := range b.m {
+		if !f(k, v) {
+			return false
+		}
+	}
 	b.mu.Unlock()
-	return m
+	return true
 }
 
 func (b *bucket) walk(f func(k, v interface{}) bool) (done bool) {
@@ -333,6 +330,8 @@ func (b *bucket) tryLoadAndDelete(m *Map, n *node, key interface{}) (actual inte
 	if !loaded {
 		return nil, false, true
 	}
+
+	// BUG issue001 b.m race with delete(b.m,key)
 	delete(b.m, key)
 	count := atomic.AddInt64(&m.count, -1)
 
