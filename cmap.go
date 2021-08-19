@@ -216,12 +216,6 @@ func evacute(n, p *node, b *bucket, i uintptr) {
 			b.m[k] = v
 			return true
 		})
-		for k, v := range pb0.freeze() {
-			b.m[k] = v
-		}
-		// for k, v := range pb1.freeze() {
-		// 	b.m[k] = v
-		// }
 	}
 	atomic.StoreInt32(&b.evacuted, 1)
 }
@@ -327,6 +321,9 @@ func (b *bucket) tryLoadOrStore(m *Map, n *node, key, value interface{}) (actual
 }
 
 func (b *bucket) tryLoadAndDelete(m *Map, n *node, key interface{}) (actual interface{}, loaded, ok bool) {
+	if b.hadFrozen() {
+		return nil, false, false
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.hadFrozen() {
