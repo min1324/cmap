@@ -219,35 +219,6 @@ func TestIssue40999(t *testing.T) {
 	}
 }
 
-func TestMapCreation(t *testing.T) {
-	m := cmap.New()
-
-	if m.Len() != 0 {
-		t.Error("new map should be empty.")
-	}
-}
-
-func TestStoreOperationDuplicatedKey(t *testing.T) {
-	m := cmap.Map{}
-	m.Store(t, "")
-	m.Store(t, "")
-	if v := m.Len(); v != 1 {
-		t.Errorf("map Count() should be %d, got %d", 1, v)
-	}
-	m.LoadOrStore("m", "")
-	if v := m.Len(); v != 2 {
-		t.Errorf("map Count() should be %d, got %d", 2, v)
-	}
-	m.Delete(t)
-	if v := m.Len(); v != 1 {
-		t.Errorf("map Count() should be %d, got %d", 1, v)
-	}
-	m.Delete(t)
-	if v := m.Len(); v != 1 {
-		t.Errorf("map Count() should be %d, got %d", 1, v)
-	}
-}
-
 func TestMapStoreAndLoad(t *testing.T) {
 	const mapSize = 1 << 14
 
@@ -295,7 +266,8 @@ func TestMapStoreAndLoad(t *testing.T) {
 
 	wg.Wait()
 
-	if m.Len() != 0 {
-		t.Fatalf("Map should be empty, remained %v", m.Len())
-	}
+	m.Range(func(key, value interface{}) bool {
+		t.Fatalf("Map should be empty")
+		return false
+	})
 }
