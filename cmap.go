@@ -88,6 +88,31 @@ func (m *CMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 	}
 }
 
+// Range calls f sequentially for each key and value present in the map.
+// If f returns false, range stops the iteration.
+//
+// Range does not necessarily correspond to any consistent snapshot of the Map's
+// contents: no key will be visited more than once, but if the value for any key
+// is stored or deleted concurrently, Range may reflect any mapping for that key
+// from any point during the Range call.
+//
+// Range may be O(N) with the number of elements in the map even if f returns
+// false after a constant number of calls.
+func (m *CMap) Range(f func(key, value interface{}) bool) {
+	n := m.getNode()
+	for i := uintptr(0); i <= n.mask; i++ {
+		b := n.getBucket(i)
+		if !b.m.rangeDone(f) {
+			return
+		}
+	}
+}
+
+// Count returns the number of elements within the map.
+func (m *CMap) Count() uint32 {
+	return atomic.LoadUint32(&m.count)
+}
+
 func (m *CMap) getNodeAndBucket(hash uintptr) (n *node, b *bucket) {
 	for {
 		n = m.getNode()
