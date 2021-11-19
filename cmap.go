@@ -73,6 +73,25 @@ func (m *CMap) Delete(key interface{}) {
 	m.LoadAndDelete(key)
 }
 
+// Count returns the number of elements within the map.
+func (m *CMap) Count() uint32 {
+	return m.count
+}
+
+// Range calls f sequentially for each key and value present in the map.
+// If f returns false, range stops the iteration.
+func (m *CMap) Range(f func(key, value interface{}) bool) bool {
+	n := m.getNode()
+	for i := uintptr(0); i <= n.mask; i++ {
+		b := n.getBucket(i)
+		if !b.m.Range(f) {
+			return false
+		}
+	}
+
+	return true
+}
+
 // LoadAndDelete deletes the value for a key, returning the previous value if any.
 // The loaded result reports whether the key was present.
 func (m *CMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
