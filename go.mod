@@ -1,3 +1,3 @@
-module github.com/min1324/cmap
+module gitee.com/absir_admin/cmap
 
 go 1.16
