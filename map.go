@@ -321,7 +321,11 @@ func (e *entry) delete() (value interface{}, ok bool) {
 //
 // Range may be O(N) with the number of elements in the map even if f returns
 // false after a constant number of calls.
-func (m *Map) Range(f func(key, value interface{}) bool) bool {
+func (m *Map) Range(f func(key, value interface{}) bool) {
+	m.RangeDone(f)
+}
+
+func (m *Map) RangeDone(f func(key, value interface{}) bool) bool {
 	// We need to be able to iterate over all of the keys that were already
 	// present at the start of the call to Range.
 	// If read.amended is false, then read.m satisfies that property without

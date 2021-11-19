@@ -80,11 +80,15 @@ func (m *CMap) Count() uint32 {
 
 // Range calls f sequentially for each key and value present in the map.
 // If f returns false, range stops the iteration.
-func (m *CMap) Range(f func(key, value interface{}) bool) bool {
+func (m *CMap) Range(f func(key, value interface{}) bool) {
+	m.RangeDone(f)
+}
+
+func (m *CMap) RangeDone(f func(key, value interface{}) bool) bool {
 	n := m.getNode()
 	for i := uintptr(0); i <= n.mask; i++ {
 		b := n.getBucket(i)
-		if !b.m.Range(f) {
+		if !b.m.RangeDone(f) {
 			return false
 		}
 	}
