@@ -123,8 +123,8 @@ func (m *CMap) Range(f func(key, value interface{}) bool) {
 }
 
 // Len returns the number of elements within the Cmap.
-func (m *CMap) Len() int {
-	return int(atomic.LoadInt64(&m.count))
+func (m *CMap) Count() int64 {
+	return atomic.LoadInt64(&m.count)
 }
 
 func (m *CMap) getNodeAndBucket(hash uintptr) (n *node, b *bucket) {
