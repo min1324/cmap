@@ -28,3 +28,11 @@ type Interface interface {
 	// Count returns the number of elements within the map.
 	Count() int64
 }
+
+func NewFMap() Interface {
+	return &FMap{}
+}
+
+func NewCMap() Interface {
+	return &CMap{}
+}

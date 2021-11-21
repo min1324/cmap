@@ -5,35 +5,19 @@ import (
 	"sync/atomic"
 )
 
-var (
-	initBitOnce sync.Once
-	bBit                = 5
-	bMask       uintptr = 1<<bBit - 1
+const (
+	bBit          = 5
+	bMask uintptr = 1<<bBit - 1
 )
-
-// InitBitOnce bmap default bucket num: 1<<bit
-func InitBitOnce(bit int) {
-	initBitOnce.Do(func() {
-		if bit > 0 && bit < 31 {
-			bBit = bit
-			bMask = 1<<bBit - 1
-		}
-	})
-}
-
-func getMask() uintptr {
-	InitBitOnce(bBit)
-	return atomic.LoadUintptr(&bMask)
-}
 
 // FMap has fixation len bucket map
 type FMap struct {
 	count  int64 // number of element
-	bucket []sync.Map
+	bucket [bMask + 1]sync.Map
 }
 
 func (m *FMap) getBucket(i uintptr) *sync.Map {
-	return &m.bucket[i&getMask()]
+	return &m.bucket[i&bMask]
 }
 
 // Load returns the value stored in the map for a key, or nil if no
@@ -97,14 +81,14 @@ func (m *FMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 // Range may be O(N) with the number of elements in the map even if f returns
 // false after a constant number of calls.
 func (m *FMap) Range(f func(key, value interface{}) bool) {
-	var done = false
+	var flag = true
 	for i := 0; i <= len(m.bucket); i++ {
 		b := m.getBucket(uintptr(i))
 		b.Range(func(key, value interface{}) bool {
-			done = f(key, value)
-			return done
+			flag = f(key, value)
+			return flag
 		})
-		if done {
+		if !flag {
 			return
 		}
 	}

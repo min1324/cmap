@@ -238,6 +238,7 @@ func (b *bucket) hadFrozen() bool {
 
 func (b *bucket) freezeInLock(f func(k, v interface{}) bool) (done bool) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	atomic.StoreInt32(&b.frozen, 1)
 
 	// BUG issue001 b.m race with delete(b.m,key)
@@ -246,7 +247,6 @@ func (b *bucket) freezeInLock(f func(k, v interface{}) bool) (done bool) {
 			return false
 		}
 	}
-	b.mu.Unlock()
 	return true
 }
 
@@ -261,6 +261,7 @@ func (b *bucket) walk(f func(k, v interface{}) bool) (done bool) {
 		entries = append(entries, entry{key: k, value: v})
 	}
 	b.mu.Unlock()
+
 	for _, e := range entries {
 		if !f(e.key, e.value) {
 			return false

@@ -90,8 +90,12 @@ func applyCalls(m mapInterface, calls []mapCall) (results []mapResult, final map
 	return results, final
 }
 
-func applyMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}) {
-	return applyCalls(new(cmap.Map), calls)
+func applyCMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}) {
+	return applyCalls(new(cmap.CMap), calls)
+}
+
+func applyFMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}) {
+	return applyCalls(new(cmap.FMap), calls)
 }
 
 func applySyncMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}) {
@@ -118,19 +122,25 @@ func TestMapEvacute(t *testing.T) {
 }
 
 func TestMapMatchesSync(t *testing.T) {
-	if err := quick.CheckEqual(applyMap, applySyncMap, nil); err != nil {
+	if err := quick.CheckEqual(applyCMap, applySyncMap, nil); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestFMapMatchesSync(t *testing.T) {
+	if err := quick.CheckEqual(applyFMap, applyRWMutexMap, nil); err != nil {
 		t.Error(err)
 	}
 }
 
 func TestMapMatchesRWMutex(t *testing.T) {
-	if err := quick.CheckEqual(applyMap, applyRWMutexMap, nil); err != nil {
+	if err := quick.CheckEqual(applyCMap, applyRWMutexMap, nil); err != nil {
 		t.Error(err)
 	}
 }
 
 func TestMapMatchesDeepCopy(t *testing.T) {
-	if err := quick.CheckEqual(applyMap, applyDeepCopyMap, nil); err != nil {
+	if err := quick.CheckEqual(applyCMap, applyDeepCopyMap, nil); err != nil {
 		t.Error(err)
 	}
 }
