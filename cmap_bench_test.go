@@ -24,7 +24,8 @@ func benchMap(b *testing.B, bench bench) {
 		// &DeepCopyMap{},
 		// &RWMutexMap{},
 		&sync.Map{},
-		&cmap.Map{},
+		&cmap.CMap{},
+		&cmap.FMap{},
 	} {
 		b.Run(fmt.Sprintf("%T", m), func(b *testing.B) {
 			m = reflect.New(reflect.TypeOf(m).Elem()).Interface().(mapInterface)
