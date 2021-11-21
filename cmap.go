@@ -22,12 +22,13 @@ type node struct {
 	mask   uintptr          // 1<<B - 1
 	B      uint8            // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
 	resize uint32           // 重新计算进程，0表示完成，1表示正在进行
-	data   []unsafe.Pointer // *bucket
+	bucket []unsafe.Pointer // *bucket
 }
 
 type bucket struct {
 	// something diy
-	m Map
+	m   Map
+	len uint32
 }
 
 // Load returns the value stored in the map for a key, or nil if no
@@ -134,13 +135,13 @@ func (m *CMap) getNode() *node {
 		n = (*node)(atomic.LoadPointer(&m.node))
 		if n == nil {
 			n = &node{
-				mask: uintptr(mInitSize - 1),
-				B:    mInitBit,
-				data: make([]unsafe.Pointer, mInitSize),
+				mask:   uintptr(mInitSize - 1),
+				B:      mInitBit,
+				bucket: make([]unsafe.Pointer, mInitSize),
 			}
 			for i := 0; i < mInitSize; i++ {
 				b := new(bucket)
-				atomic.StorePointer(&n.data[i], unsafe.Pointer(b))
+				atomic.StorePointer(&n.bucket[i], unsafe.Pointer(b))
 			}
 			atomic.StorePointer(&m.node, unsafe.Pointer(n))
 		}
@@ -150,7 +151,7 @@ func (m *CMap) getNode() *node {
 }
 
 func (n *node) getBucket(i uintptr) *bucket {
-	return (*bucket)(atomic.LoadPointer(&n.data[i&n.mask]))
+	return (*bucket)(atomic.LoadPointer(&n.bucket[i&n.mask]))
 }
 
 func (b *bucket) tryLoad(key interface{}) (value interface{}, ok bool) {
@@ -170,8 +171,10 @@ func (b *bucket) tryLoadOrStore(m *CMap, n *node, key, value interface{}) (actua
 	if loaded {
 		return actual, loaded, true
 	}
+
 	// grow
-	if overflowGrow(atomic.AddUint32(&m.count, 1), n.B) {
+	if overflowGrow(atomic.AddUint32(&m.count, 1), n.B) ||
+		overLoadFactor(atomic.AddUint32(&b.len, 1), n.B) { // bucket too many element
 		growWork(m, n, n.B+1)
 	}
 	return actual, loaded, true
@@ -181,6 +184,7 @@ func (b *bucket) tryLoadAndDelete(m *CMap, n *node, key interface{}) (actual int
 	actual, loaded = b.m.LoadAndDelete(key)
 	if !loaded {
 		atomic.AddUint32(&m.count, ^uint32(0))
+		atomic.AddUint32(&b.len, ^uint32(0))
 	}
 	return actual, loaded, true
 }
@@ -193,7 +197,7 @@ func growWork(m *CMap, n *node, B uint8) {
 		mask:   bucketMask(B),
 		B:      B,
 		resize: 1,
-		data:   make([]unsafe.Pointer, bucketShift(B)),
+		bucket: make([]unsafe.Pointer, bucketShift(B)),
 	}
 	// cas node
 	ok := atomic.CompareAndSwapPointer(&m.node, unsafe.Pointer(n), unsafe.Pointer(nn))
@@ -215,8 +219,8 @@ func growWork(m *CMap, n *node, B uint8) {
 				}
 				return true
 			})
-			atomic.StorePointer(&nn.data[i+int(oLen)], unsafe.Pointer(newBucket))
-			atomic.StorePointer(&nn.data[i], unsafe.Pointer(oldBucket))
+			atomic.StorePointer(&nn.bucket[i+int(oLen)], unsafe.Pointer(newBucket))
+			atomic.StorePointer(&nn.bucket[i], unsafe.Pointer(oldBucket))
 		}
 		atomic.AddUint32(&nn.resize, 0)
 	}()
