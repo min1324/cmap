@@ -29,10 +29,20 @@ type Interface interface {
 	Count() int64
 }
 
+// New return an initialize map
+func New() Interface {
+	return &Map{}
+}
+
+// NewFMap return an initialize fmap
 func NewFMap() Interface {
 	return &FMap{}
 }
 
+// NewCMap return an initialize cmap
 func NewCMap() Interface {
-	return &CMap{}
+	m := &CMap{}
+	n := m.getNode()
+	n.initBuckets()
+	return m
 }

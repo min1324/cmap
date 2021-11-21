@@ -36,14 +36,6 @@ type bucket struct {
 	m        map[interface{}]interface{} //
 }
 
-// New return an initialize cCmap
-func New() *CMap {
-	m := &CMap{}
-	n := m.getNode()
-	n.initBuckets()
-	return m
-}
-
 // Load returns the value stored in the Cmap for a key, or nil if no
 // value is present.
 // The ok result indicates whether value was found in the Cmap.
@@ -62,7 +54,6 @@ func (m *CMap) Store(key, value interface{}) {
 		if b.tryStore(m, n, key, value) {
 			return
 		}
-		runtime.Gosched()
 	}
 }
 
@@ -122,7 +113,7 @@ func (m *CMap) Range(f func(key, value interface{}) bool) {
 	}
 }
 
-// Len returns the number of elements within the Cmap.
+// Count returns the number of elements within the Cmap.
 func (m *CMap) Count() int64 {
 	return atomic.LoadInt64(&m.count)
 }
