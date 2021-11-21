@@ -281,3 +281,35 @@ func TestMapStoreAndLoad(t *testing.T) {
 		return false
 	})
 }
+
+func TestCount(t *testing.T) {
+	const want = 1025
+	tests := []struct {
+		name string
+		m    cmap.Interface
+		want int
+	}{
+		// TODO: Add test cases.
+		{
+			"fmap",
+			&cmap.FMap{},
+			want,
+		},
+		{
+			"cmap",
+			&cmap.CMap{},
+			want,
+		},
+	}
+	for _, tt := range tests {
+		for i := 0; i < tt.want; i++ {
+			tt.m.Store(i, i)
+		}
+		t.Run(tt.name, func(t *testing.T) {
+
+			if got := tt.m.Count(); int(got) != tt.want {
+				t.Errorf("Count() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
