@@ -211,11 +211,14 @@ func growWork(m *CMap, n *node, B uint8) {
 			newBucket := new(bucket)
 			oldBucket := n.getBucket(uintptr(i))
 			// #issue01 concurrent delete or store err
-			oldBucket.m.walkLocketInFreeze(func(key, value interface{}) bool {
+			oldBucket.m.walkLockInFreeze(func(key, value interface{}) bool {
 				h := chash(key)
 				if h&nn.mask != uintptr(i) {
+					// update newBucket len, ignore growwork
 					newBucket.m.Store(key, value)
+					atomic.AddUint32(&newBucket.len, 1)
 					oldBucket.m.deleteLocked(key)
+					// old bucket discard, no need update len
 				}
 				return true
 			})

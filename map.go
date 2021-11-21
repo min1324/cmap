@@ -404,7 +404,7 @@ func (m *Map) waitUnfreeze() {
 	}
 }
 
-func (m *Map) walkLocketInFreeze(f func(key, value interface{}) bool) {
+func (m *Map) walkLockInFreeze(f func(key, value interface{}) bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	atomic.StoreUint32(&m.freeze, 1)
