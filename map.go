@@ -58,6 +58,8 @@ type Map struct {
 	// map, the dirty map will be promoted to the read map (in the unamended
 	// state) and the next store to the map will make a new dirty copy.
 	misses int
+
+	count int64
 }
 
 // readOnly is an immutable struct stored atomically in the Map.read field.
@@ -147,6 +149,7 @@ func (m *Map) Store(key, value interface{}) {
 			// The entry was previously expunged, which implies that there is a
 			// non-nil dirty map and this entry is not in it.
 			m.dirty[key] = e
+			atomic.AddInt64(&m.count, 1)
 		}
 		e.storeLocked(&value)
 	} else if e, ok := m.dirty[key]; ok {
@@ -159,6 +162,7 @@ func (m *Map) Store(key, value interface{}) {
 			m.read.Store(readOnly{m: read.m, amended: true})
 		}
 		m.dirty[key] = newEntry(value)
+		atomic.AddInt64(&m.count, 1)
 	}
 	m.mu.Unlock()
 }
@@ -212,6 +216,7 @@ func (m *Map) LoadOrStore(key, value interface{}) (actual interface{}, loaded bo
 	if e, ok := read.m[key]; ok {
 		if e.unexpungeLocked() {
 			m.dirty[key] = e
+			atomic.AddInt64(&m.count, 1)
 		}
 		actual, loaded, _ = e.tryLoadOrStore(value)
 	} else if e, ok := m.dirty[key]; ok {
@@ -226,6 +231,7 @@ func (m *Map) LoadOrStore(key, value interface{}) (actual interface{}, loaded bo
 		}
 		m.dirty[key] = newEntry(value)
 		actual, loaded = value, false
+		atomic.AddInt64(&m.count, 1)
 	}
 	m.mu.Unlock()
 
@@ -276,6 +282,7 @@ func (m *Map) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 		if !ok && read.amended {
 			e, ok = m.dirty[key]
 			delete(m.dirty, key)
+			atomic.AddInt64(&m.count, ^int64(0))
 			// Regardless of whether the entry was present, record a miss: this key
 			// will take the slow path until the dirty map is promoted to the read
 			// map.
@@ -347,6 +354,11 @@ func (m *Map) Range(f func(key, value interface{}) bool) {
 			break
 		}
 	}
+}
+
+// Count returns the number of elements within the map.
+func (m *Map) Count() int64 {
+	return atomic.LoadInt64(&m.count)
 }
 
 func (m *Map) missLocked() {
