@@ -99,7 +99,7 @@ func applyFMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}) {
 }
 
 func applySyncMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}) {
-	return applyCalls(new(sync.Map), calls)
+	return applyCalls(new(cmap.Map), calls)
 }
 
 func applyRWMutexMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}) {
@@ -111,7 +111,7 @@ func applyDeepCopyMap(calls []mapCall) ([]mapResult, map[interface{}]interface{}
 }
 
 func TestMapEvacute(t *testing.T) {
-	var m cmap.Map
+	var m cmap.CMap
 	for i := 0; i < 1<<20; i++ {
 		m.Store(i, i)
 	}
@@ -148,7 +148,7 @@ func TestMapMatchesDeepCopy(t *testing.T) {
 func TestConcurrentRange(t *testing.T) {
 	const mapSize = 1 << 10
 
-	m := new(sync.Map)
+	m := new(cmap.CMap)
 	for n := int64(1); n <= mapSize; n++ {
 		m.Store(n, int64(n))
 	}
@@ -207,7 +207,7 @@ func TestConcurrentRange(t *testing.T) {
 }
 
 func TestIssue40999(t *testing.T) {
-	var m cmap.Map
+	var m cmap.CMap
 
 	// Since the miss-counting in missLocked (via Delete)
 	// compares the miss count with len(m.dirty),
@@ -233,7 +233,7 @@ func TestMapStoreAndLoad(t *testing.T) {
 	const mapSize = 1 << 14
 
 	var (
-		m    cmap.Map
+		m    cmap.CMap
 		wg   sync.WaitGroup
 		seen = make(map[int64]bool, mapSize)
 	)
