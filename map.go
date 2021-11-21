@@ -1,11 +1,10 @@
-package cmap
-
 // Copyright 2016 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+package cmap
+
 import (
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -59,9 +58,6 @@ type Map struct {
 	// map, the dirty map will be promoted to the read map (in the unamended
 	// state) and the next store to the map will make a new dirty copy.
 	misses int
-
-	// frozen map,can't store or delete et.
-	freeze uint32
 }
 
 // readOnly is an immutable struct stored atomically in the Map.read field.
@@ -143,7 +139,7 @@ func (m *Map) Store(key, value interface{}) {
 	if e, ok := read.m[key]; ok && e.tryStore(&value) {
 		return
 	}
-	m.waitUnfreeze()
+
 	m.mu.Lock()
 	read, _ = m.read.Load().(readOnly)
 	if e, ok := read.m[key]; ok {
@@ -210,7 +206,7 @@ func (m *Map) LoadOrStore(key, value interface{}) (actual interface{}, loaded bo
 			return actual, loaded
 		}
 	}
-	m.waitUnfreeze()
+
 	m.mu.Lock()
 	read, _ = m.read.Load().(readOnly)
 	if e, ok := read.m[key]; ok {
@@ -274,7 +270,6 @@ func (m *Map) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 	read, _ := m.read.Load().(readOnly)
 	e, ok := read.m[key]
 	if !ok && read.amended {
-		m.waitUnfreeze()
 		m.mu.Lock()
 		read, _ = m.read.Load().(readOnly)
 		e, ok = read.m[key]
@@ -322,10 +317,6 @@ func (e *entry) delete() (value interface{}, ok bool) {
 // Range may be O(N) with the number of elements in the map even if f returns
 // false after a constant number of calls.
 func (m *Map) Range(f func(key, value interface{}) bool) {
-	m.rangeDone(f)
-}
-
-func (m *Map) rangeDone(f func(key, value interface{}) bool) bool {
 	// We need to be able to iterate over all of the keys that were already
 	// present at the start of the call to Range.
 	// If read.amended is false, then read.m satisfies that property without
@@ -353,10 +344,9 @@ func (m *Map) rangeDone(f func(key, value interface{}) bool) bool {
 			continue
 		}
 		if !f(k, v) {
-			return false
+			break
 		}
 	}
-	return true
 }
 
 func (m *Map) missLocked() {
@@ -392,50 +382,4 @@ func (e *entry) tryExpungeLocked() (isExpunged bool) {
 		p = atomic.LoadPointer(&e.p)
 	}
 	return p == expunged
-}
-
-func (m *Map) frozen() bool {
-	return atomic.LoadUint32(&m.freeze) == 1
-}
-
-func (m *Map) waitUnfreeze() {
-	for m.frozen() {
-		runtime.Gosched()
-	}
-}
-
-func (m *Map) walkLockInFreeze(f func(key, value interface{}) bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	atomic.StoreUint32(&m.freeze, 1)
-	defer atomic.StoreUint32(&m.freeze, 0)
-
-	read, _ := m.read.Load().(readOnly)
-	if read.amended {
-		read, _ = m.read.Load().(readOnly)
-		if read.amended {
-			read = readOnly{m: m.dirty}
-			m.read.Store(read)
-			m.dirty = nil
-			m.misses = 0
-		}
-	}
-
-	for k, e := range read.m {
-		v, ok := e.load()
-		if !ok {
-			continue
-		}
-		if !f(k, v) {
-			break
-		}
-	}
-}
-
-func (m *Map) deleteLocked(key interface{}) {
-	e, ok := m.dirty[key]
-	delete(m.dirty, key)
-	if ok {
-		e.delete()
-	}
 }
