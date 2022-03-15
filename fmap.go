@@ -33,9 +33,10 @@ func (m *FMap) Load(key interface{}) (value interface{}, ok bool) {
 func (m *FMap) Store(key, value interface{}) {
 	hash := chash(key)
 	b := m.getBucket(hash)
-	_, loaded := b.Load(key)
-	b.Store(key, value)
-	if !loaded {
+	_, loaded := b.LoadOrStore(key, value)
+	if loaded {
+		b.Store(key, value)
+	} else {
 		atomic.AddInt64(&m.count, 1)
 	}
 }
