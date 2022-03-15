@@ -15,7 +15,7 @@ const (
 // CMap is a "thread" safe Cmap of type AnyComparableType:Any.
 // To avoid lock bottlenecks this Cmap is dived to several Cmap shards.
 type CMap struct {
-	mu    sync.Mutex
+	// mu    sync.Mutex
 	count int64
 	node  unsafe.Pointer
 }
@@ -30,7 +30,7 @@ type node struct {
 
 type bucket struct {
 	mu       sync.RWMutex
-	init     int32
+	init     sync.Once
 	evacuted int32                       // 1 表示oldNode对应buckut已经迁移到新buckut
 	frozen   int32                       // true表示当前bucket已经冻结，进行resize
 	m        map[interface{}]interface{} //
@@ -125,31 +125,53 @@ func (m *CMap) getNodeAndBucket(hash uintptr) (n *node, b *bucket) {
 }
 
 func (m *CMap) getNode() *node {
-	n := (*node)(atomic.LoadPointer(&m.node))
-	if n == nil {
-		m.mu.Lock()
-		n = (*node)(atomic.LoadPointer(&m.node))
-		if n == nil {
-			n = &node{
-				mask:    uintptr(mInitSize - 1),
-				B:       mInitBit,
-				buckets: make([]bucket, mInitSize),
-			}
-			atomic.StorePointer(&m.node, unsafe.Pointer(n))
+	for {
+		n := (*node)(atomic.LoadPointer(&m.node))
+		if n != nil {
+			return n
 		}
-		m.mu.Unlock()
+		// node == nil, init node.
+		newNode := &node{
+			mask:    uintptr(mInitSize - 1),
+			B:       mInitBit,
+			buckets: make([]bucket, mInitSize),
+		}
+		if atomic.CompareAndSwapPointer(&m.node, nil, unsafe.Pointer(newNode)) {
+			return newNode
+		}
 	}
-	return n
+	// n := (*node)(atomic.LoadPointer(&m.node))
+	// if n == nil {
+	// 	m.mu.Lock()
+	// 	n = (*node)(atomic.LoadPointer(&m.node))
+	// 	if n == nil {
+	// 		n = &node{
+	// 			mask:    uintptr(mInitSize - 1),
+	// 			B:       mInitBit,
+	// 			buckets: make([]bucket, mInitSize),
+	// 		}
+	// 		atomic.StorePointer(&m.node, unsafe.Pointer(n))
+	// 	}
+	// 	m.mu.Unlock()
+	// }
+	// return n
 }
 
 // give a hash key and return it's store bucket
-func (n *node) getBucket(h uintptr) *bucket {
-	return n.initBucket(h)
+func (n *node) getBucket(i uintptr) *bucket {
+	i = i & n.mask
+	b := &(n.buckets[i])
+	b.onceInit()
+	oldNode := (*node)(atomic.LoadPointer(&n.oldNode))
+	if oldNode != nil && !b.hadEvacuted() {
+		evacute(n, oldNode, b, i)
+	}
+	return b
 }
 
 func (n *node) initBuckets() {
 	for i := range n.buckets {
-		n.initBucket(uintptr(i))
+		n.getBucket(uintptr(i))
 	}
 	// empty oldNode
 	atomic.StorePointer(&n.oldNode, nil)
@@ -157,39 +179,28 @@ func (n *node) initBuckets() {
 	atomic.StoreUint32(&n.resize, 0)
 }
 
-func (n *node) initBucket(i uintptr) *bucket {
-	i = i & n.mask
-	b := &(n.buckets[i])
-	b.lazyinit()
-	p := (*node)(atomic.LoadPointer(&n.oldNode))
-	if p != nil && !b.hadEvacuted() {
-		evacute(n, p, b, i)
-	}
-	return b
-}
-
-// evacute node.oldNode -> node
-// i must be b==n.buckuts[i&n.mask]
-func evacute(n, p *node, b *bucket, i uintptr) {
+// evacute oldNode -> newNode
+// i must be b==new.buckuts[i&n.mask]
+func evacute(new, old *node, b *bucket, i uintptr) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.hadEvacuted() || p == nil {
+	if b.hadEvacuted() || old == nil {
 		return
 	}
-	if n.mask > p.mask {
+	if new.mask > old.mask {
 		// grow
-		pb := p.getBucket(i)
+		pb := old.getBucket(i)
 		pb.freezeInLock(func(k, v interface{}) bool {
 			h := chash(k)
-			if h&n.mask == i {
+			if h&new.mask == i {
 				b.m[k] = v
 			}
 			return true
 		})
 	} else {
 		// shrink
-		pb0 := p.getBucket(i)
-		pb1 := p.getBucket(i + bucketShift(n.B))
+		pb0 := old.getBucket(i)
+		pb1 := old.getBucket(i + bucketShift(new.B))
 		pb0.freezeInLock(func(k, v interface{}) bool {
 			b.m[k] = v
 			return true
@@ -202,21 +213,10 @@ func evacute(n, p *node, b *bucket, i uintptr) {
 	atomic.StoreInt32(&b.evacuted, 1)
 }
 
-func (b *bucket) lazyinit() {
-	if b.hadInited() {
-		return
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.hadInited() {
-		return
-	}
-	b.m = make(map[interface{}]interface{})
-	atomic.StoreInt32(&b.init, 1)
-}
-
-func (b *bucket) hadInited() bool {
-	return atomic.LoadInt32(&b.init) == 1
+func (b *bucket) onceInit() {
+	b.init.Do(func() {
+		b.m = make(map[interface{}]interface{})
+	})
 }
 
 func (b *bucket) hadEvacuted() bool {
@@ -336,18 +336,19 @@ func (b *bucket) tryLoadAndDelete(m *CMap, n *node, key interface{}) (actual int
 
 func growWork(m *CMap, n *node, B uint8) {
 	if !n.growing() && atomic.CompareAndSwapUint32(&n.resize, 0, 1) {
-		nn := &node{
-			mask:    bucketMask(B),
-			B:       B,
-			resize:  1,
-			oldNode: unsafe.Pointer(n),
-			buckets: make([]bucket, bucketShift(B)),
+		for {
+			nn := &node{
+				mask:    bucketMask(B),
+				B:       B,
+				resize:  1,
+				oldNode: unsafe.Pointer(n),
+				buckets: make([]bucket, bucketShift(B)),
+			}
+			if atomic.CompareAndSwapPointer(&m.node, unsafe.Pointer(n), unsafe.Pointer(nn)) {
+				go nn.initBuckets()
+				return
+			}
 		}
-		ok := atomic.CompareAndSwapPointer(&m.node, unsafe.Pointer(n), unsafe.Pointer(nn))
-		if !ok {
-			panic("BUG: failed swapping head")
-		}
-		go nn.initBuckets()
 	}
 }
 

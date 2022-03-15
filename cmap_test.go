@@ -119,6 +119,9 @@ func TestMapEvacute(t *testing.T) {
 	if !ok || v != 1<<15 {
 		t.Errorf("i!=15")
 	}
+	if m.Count() != 1<<20 {
+		t.Errorf("Count!=1<<20")
+	}
 }
 
 func TestMapMatchesSync(t *testing.T) {
@@ -298,6 +301,11 @@ func TestCount(t *testing.T) {
 		{
 			"cmap",
 			&cmap.CMap{},
+			want,
+		},
+		{
+			"map",
+			&cmap.Map{},
 			want,
 		},
 	}
