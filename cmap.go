@@ -358,10 +358,8 @@ func (n *node) growing() bool {
 
 // buckut len over loadfactor
 func overLoadFactor(blen int64, B uint8) bool {
-	if B > 15 {
-		B = 15
-	}
-	return blen > int64(1<<(B+1)) && B < 31
+	// TODO adjust loadfactor
+	return blen*13/2 > int64(1<<(B)) && B < 31
 }
 
 // count overflow grow threshold
