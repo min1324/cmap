@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	mInitBit  = 4
-	mInitSize = 1 << mInitBit
+	mInitBit      = 4
+	mInitSize     = 1 << mInitBit
+	uint32JodDone = 1
+	uint32Jodinit = 0
 )
 
 // CMap is a "thread" safe Cmap of type AnyComparableType:Any.
@@ -31,15 +33,15 @@ type node struct {
 type bucket struct {
 	mu       sync.RWMutex
 	init     sync.Once
-	evacuted int32                       // 1 表示oldNode对应buckut已经迁移到新buckut
-	frozen   int32                       // true表示当前bucket已经冻结，进行resize
-	m        map[interface{}]interface{} //
+	evacuted uint32      // 1 表示oldNode对应buckut已经迁移到新buckut
+	frozen   uint32      // true表示当前bucket已经冻结，进行resize
+	m        map[any]any //
 }
 
 // Load returns the value stored in the Cmap for a key, or nil if no
 // value is present.
 // The ok result indicates whether value was found in the Cmap.
-func (m *CMap) Load(key interface{}) (value interface{}, ok bool) {
+func (m *CMap) Load(key any) (value any, ok bool) {
 	hash := chash(key)
 	_, b := m.getNodeAndBucket(hash)
 	value, ok = b.tryLoad(key)
@@ -47,7 +49,7 @@ func (m *CMap) Load(key interface{}) (value interface{}, ok bool) {
 }
 
 // Store sets the value for a key.
-func (m *CMap) Store(key, value interface{}) {
+func (m *CMap) Store(key, value any) {
 	hash := chash(key)
 	for {
 		n, b := m.getNodeAndBucket(hash)
@@ -60,7 +62,7 @@ func (m *CMap) Store(key, value interface{}) {
 // LoadOrStore returns the existing value for the key if present.
 // Otherwise, it stores and returns the given value.
 // The loaded result is true if the value was loaded, false if stored.
-func (m *CMap) LoadOrStore(key, value interface{}) (actual interface{}, loaded bool) {
+func (m *CMap) LoadOrStore(key, value any) (actual any, loaded bool) {
 	hash := chash(key)
 	var ok bool
 	for {
@@ -74,13 +76,13 @@ func (m *CMap) LoadOrStore(key, value interface{}) (actual interface{}, loaded b
 }
 
 // Delete deletes the value for a key.
-func (m *CMap) Delete(key interface{}) {
+func (m *CMap) Delete(key any) {
 	m.LoadAndDelete(key)
 }
 
 // LoadAndDelete deletes the value for a key, returning the previous value if any.
 // The loaded result reports whether the key was present.
-func (m *CMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
+func (m *CMap) LoadAndDelete(key any) (value any, loaded bool) {
 	hash := chash(key)
 	var ok bool
 	for {
@@ -103,7 +105,7 @@ func (m *CMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 //
 // Range may be O(N) with the number of elements in the Cmap even if f returns
 // false after a constant number of calls.
-func (m *CMap) Range(f func(key, value interface{}) bool) {
+func (m *CMap) Range(f func(key, value any) bool) {
 	n := m.getNode()
 	for i := range n.buckets {
 		b := n.getBucket(uintptr(i))
@@ -190,7 +192,7 @@ func evacute(new, old *node, b *bucket, i uintptr) {
 	if new.mask > old.mask {
 		// grow
 		pb := old.getBucket(i)
-		pb.freezeInLock(func(k, v interface{}) bool {
+		pb.freezeInLock(func(k, v any) bool {
 			h := chash(k)
 			if h&new.mask == i {
 				b.m[k] = v
@@ -201,36 +203,36 @@ func evacute(new, old *node, b *bucket, i uintptr) {
 		// shrink
 		pb0 := old.getBucket(i)
 		pb1 := old.getBucket(i + bucketShift(new.B))
-		pb0.freezeInLock(func(k, v interface{}) bool {
+		pb0.freezeInLock(func(k, v any) bool {
 			b.m[k] = v
 			return true
 		})
-		pb1.freezeInLock(func(k, v interface{}) bool {
+		pb1.freezeInLock(func(k, v any) bool {
 			b.m[k] = v
 			return true
 		})
 	}
-	atomic.StoreInt32(&b.evacuted, 1)
+	atomic.StoreUint32(&b.evacuted, uint32JodDone)
 }
 
 func (b *bucket) onceInit() {
 	b.init.Do(func() {
-		b.m = make(map[interface{}]interface{})
+		b.m = make(map[any]any)
 	})
 }
 
 func (b *bucket) hadEvacuted() bool {
-	return atomic.LoadInt32(&b.evacuted) == 1
+	return atomic.LoadUint32(&b.evacuted) == uint32JodDone
 }
 
 func (b *bucket) hadFrozen() bool {
-	return atomic.LoadInt32(&b.frozen) == 1
+	return atomic.LoadUint32(&b.frozen) == uint32JodDone
 }
 
-func (b *bucket) freezeInLock(f func(k, v interface{}) bool) (done bool) {
+func (b *bucket) freezeInLock(f func(k, v any) bool) (done bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	atomic.StoreInt32(&b.frozen, 1)
+	atomic.StoreUint32(&b.frozen, uint32JodDone)
 
 	// BUG issue001 b.m race with delete(b.m,key)
 	for k, v := range b.m {
@@ -241,10 +243,10 @@ func (b *bucket) freezeInLock(f func(k, v interface{}) bool) (done bool) {
 	return true
 }
 
-func (b *bucket) walk(f func(k, v interface{}) bool) (done bool) {
+func (b *bucket) walk(f func(k, v any) bool) (done bool) {
 	// use in range
 	type entry struct {
-		key, value interface{}
+		key, value any
 	}
 	b.mu.Lock()
 	entries := make([]entry, 0, len(b.m))
@@ -261,14 +263,14 @@ func (b *bucket) walk(f func(k, v interface{}) bool) (done bool) {
 	return true
 }
 
-func (b *bucket) tryLoad(key interface{}) (value interface{}, ok bool) {
+func (b *bucket) tryLoad(key any) (value any, ok bool) {
 	b.mu.RLock()
 	value, ok = b.m[key]
 	b.mu.RUnlock()
 	return
 }
 
-func (b *bucket) tryStore(m *CMap, n *node, key, value interface{}) bool {
+func (b *bucket) tryStore(m *CMap, n *node, key, value any) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.hadFrozen() {
@@ -289,7 +291,7 @@ func (b *bucket) tryStore(m *CMap, n *node, key, value interface{}) bool {
 	return true
 }
 
-func (b *bucket) tryLoadOrStore(m *CMap, n *node, key, value interface{}) (actual interface{}, loaded, ok bool) {
+func (b *bucket) tryLoadOrStore(m *CMap, n *node, key, value any) (actual any, loaded, ok bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.hadFrozen() {
@@ -309,7 +311,7 @@ func (b *bucket) tryLoadOrStore(m *CMap, n *node, key, value interface{}) (actua
 	return value, false, true
 }
 
-func (b *bucket) tryLoadAndDelete(m *CMap, n *node, key interface{}) (actual interface{}, loaded, ok bool) {
+func (b *bucket) tryLoadAndDelete(m *CMap, n *node, key any) (actual any, loaded, ok bool) {
 	if b.hadFrozen() {
 		return nil, false, false
 	}

@@ -224,7 +224,7 @@ func BenchmarkRange(b *testing.B) {
 
 		perG: func(b *testing.B, pb *testing.PB, i int, m mapInterface) {
 			for ; pb.Next(); i++ {
-				m.Range(func(_, _ interface{}) bool { return true })
+				m.Range(func(_, _ any) bool { return true })
 			}
 		},
 	})
@@ -271,7 +271,7 @@ func BenchmarkAdversarialDelete(b *testing.B) {
 				m.Load(i)
 
 				if i%mapSize == 0 {
-					m.Range(func(k, _ interface{}) bool {
+					m.Range(func(k, _ any) bool {
 						m.Delete(k)
 						return false
 					})

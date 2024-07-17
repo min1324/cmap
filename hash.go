@@ -2,7 +2,7 @@ package cmap
 
 import "unsafe"
 
-func chash(i interface{}) uintptr {
+func chash(i any) uintptr {
 	return nilinterhash(noescape(unsafe.Pointer(&i)), 0xdeadbeef)
 }
 

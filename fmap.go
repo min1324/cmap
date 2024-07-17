@@ -23,14 +23,14 @@ func (m *FMap) getBucket(i uintptr) *sync.Map {
 // Load returns the value stored in the map for a key, or nil if no
 // value is present.
 // The ok result indicates whether value was found in the map.
-func (m *FMap) Load(key interface{}) (value interface{}, ok bool) {
+func (m *FMap) Load(key any) (value any, ok bool) {
 	hash := chash(key)
 	b := m.getBucket(hash)
 	return b.Load(key)
 }
 
 // Store sets the value for a key.
-func (m *FMap) Store(key, value interface{}) {
+func (m *FMap) Store(key, value any) {
 	hash := chash(key)
 	b := m.getBucket(hash)
 	_, loaded := b.LoadOrStore(key, value)
@@ -44,7 +44,7 @@ func (m *FMap) Store(key, value interface{}) {
 // LoadOrStore returns the existing value for the key if present.
 // Otherwise, it stores and returns the given value.
 // The loaded result is true if the value was loaded, false if stored.
-func (m *FMap) LoadOrStore(key, value interface{}) (actual interface{}, loaded bool) {
+func (m *FMap) LoadOrStore(key, value any) (actual any, loaded bool) {
 	hash := chash(key)
 	b := m.getBucket(hash)
 	actual, loaded = b.LoadOrStore(key, value)
@@ -55,13 +55,13 @@ func (m *FMap) LoadOrStore(key, value interface{}) (actual interface{}, loaded b
 }
 
 // Delete deletes the value for a key.
-func (m *FMap) Delete(key interface{}) {
+func (m *FMap) Delete(key any) {
 	m.LoadAndDelete(key)
 }
 
 // LoadAndDelete deletes the value for a key, returning the previous value if any.
 // The loaded result reports whether the key was present.
-func (m *FMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
+func (m *FMap) LoadAndDelete(key any) (value any, loaded bool) {
 	hash := chash(key)
 	b := m.getBucket(hash)
 	value, loaded = b.LoadAndDelete(key)
@@ -81,11 +81,11 @@ func (m *FMap) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 //
 // Range may be O(N) with the number of elements in the map even if f returns
 // false after a constant number of calls.
-func (m *FMap) Range(f func(key, value interface{}) bool) {
+func (m *FMap) Range(f func(key, value any) bool) {
 	var flag = true
 	for i := 0; i <= len(m.bucket); i++ {
 		b := m.getBucket(uintptr(i))
-		b.Range(func(key, value interface{}) bool {
+		b.Range(func(key, value any) bool {
 			flag = f(key, value)
 			return flag
 		})
